@@ -31,14 +31,22 @@ object RootShell {
             val process = ProcessBuilder("su", "-c", command)
                 .redirectErrorStream(true)
                 .start()
+            val output = StringBuilder()
+            val reader = Thread {
+                process.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach { output.append(it).append('\n') }
+                }
+            }
+            reader.start()
 
             if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
                 process.destroyForcibly()
-                return RootCommandResult(-1, "Root komutu zaman aşımına uğradı.", true)
+                reader.join(1500)
+                return RootCommandResult(-1, output.toString().trim(), true)
             }
 
-            val output = process.inputStream.bufferedReader().use { it.readText() }
-            RootCommandResult(process.exitValue(), output.trim())
+            reader.join(1500)
+            RootCommandResult(process.exitValue(), output.toString().trim())
         } catch (e: Exception) {
             RootCommandResult(127, e.message ?: "su çalıştırılamadı.")
         }
@@ -50,34 +58,36 @@ object RootShell {
 object MagiskControl {
     private const val MODULE_ID_PATTERN = "^[A-Za-z0-9._-]{1,80}$"
 
+    // @ is replaced with $ after Kotlin has parsed this raw string.
     private val inspectScript = """
-        uid=$(id -u 2>/dev/null)
-        echo "ROOT=$uid"
-        MAGISK_BIN=$(command -v magisk 2>/dev/null)
-        if [ -z "$MAGISK_BIN" ]; then
+        uid=@(id -u 2>/dev/null)
+        echo "ROOT=@uid"
+        MAGISK_BIN=@(command -v magisk 2>/dev/null)
+        if [ -z "@MAGISK_BIN" ]; then
           for p in /sbin/.magisk/magisk /sbin/magisk /debug_ramdisk/.magisk/magisk /data/adb/magisk/magisk; do
-            if [ -x "$p" ]; then MAGISK_BIN="$p"; break; fi
+            if [ -x "@p" ]; then MAGISK_BIN="@p"; break; fi
           done
         fi
-        if [ -n "$MAGISK_BIN" ] && [ -x "$MAGISK_BIN" ]; then
-          echo "MAGISK=$MAGISK_BIN"
-          ver=$( "$MAGISK_BIN" -v 2>/dev/null | head -n 1 )
-          [ -z "$ver" ] && ver=$( "$MAGISK_BIN" -c 2>/dev/null | head -n 1 )
-          echo "VERSION=$ver"
-          echo "DAEMON_PATH=$( "$MAGISK_BIN" --path 2>/dev/null | head -n 1 )"
+        if [ -n "@MAGISK_BIN" ] && [ -x "@MAGISK_BIN" ]; then
+          echo "MAGISK=@MAGISK_BIN"
+          ver=@( "@MAGISK_BIN" -v 2>/dev/null | head -n 1 )
+          [ -z "@ver" ] && ver=@( "@MAGISK_BIN" -c 2>/dev/null | head -n 1 )
+          echo "VERSION=@ver"
+          echo "DAEMON_PATH=@( "@MAGISK_BIN" --path 2>/dev/null | head -n 1 )"
           for d in /data/adb/modules/*; do
-            [ -d "$d" ] || continue
-            [ -f "$d/module.prop" ] || continue
-            id=${'$'}{d##*/}
-            name=$(sed -n 's/^name=//p' "$d/module.prop" | head -n 1 | tr '\t\n' '  ')
-            version=$(sed -n 's/^version=//p' "$d/module.prop" | head -n 1 | tr '\t\n' '  ')
+            [ -d "@d" ] || continue
+            [ -f "@d/module.prop" ] || continue
+            id=@{d##*/}
+            name=@(sed -n 's/^name=//p' "@d/module.prop" | head -n 1 | tr '\t\n' '  ')
+            version=@(sed -n 's/^version=//p' "@d/module.prop" | head -n 1 | tr '\t\n' '  ')
             state=Enabled
-            [ -f "$d/disable" ] && state=Disabled
-            [ -f "$d/remove" ] && state=PendingRemoval
-            printf 'MODULE\t%s\t%s\t%s\t%s\n' "$id" "$name" "$version" "$state"
+            [ -f "@d/disable" ] && state=Disabled
+            [ -f "@d/update" ] && state=PendingUpdate
+            [ -f "@d/remove" ] && state=PendingRemoval
+            printf 'MODULE\t%s\t%s\t%s\t%s\n' "@id" "@name" "@version" "@state"
           done
         fi
-    """.trimIndent()
+    """.trimIndent().replace('@', '$')
 
     fun inspect(): MagiskSnapshot {
         val result = RootShell.run(inspectScript)
