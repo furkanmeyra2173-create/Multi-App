@@ -47,7 +47,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y autoconf automake bison flex gettext git libtool-bin make ninja-build patch pkg-config python3-venv rsync texinfo unzip wget zip
           python3 -m venv /tmp/qemu-tools
-          /tmp/qemu-tools/bin/pip install --upgrade pip meson mako
+          /tmp/qemu-tools/bin/pip install --upgrade pip meson mako PyYAML
           echo "/tmp/qemu-tools/bin" >> "$GITHUB_PATH"
 
       - name: Fetch and prepare pinned QEMU dependencies
