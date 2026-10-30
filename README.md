@@ -1,40 +1,28 @@
 # Multi-App
 
-Multi-App is being rebuilt around an isolated Android guest environment. The physical Android installation must remain unrooted.
+Multi-App is being built as an isolated ARM64 Android guest VM. The physical Android installation must remain unrooted.
 
-## Architecture status
+## Selected guest Android
 
-The current branch removes the previous host-root control path. It no longer invokes `su`, reads the host's `/data/adb`, or attempts to install Magisk modules into the physical phone.
+The first guest target is **Android 12L (API 32), ARM64**. The VM engine is independent from the guest Android version; Android 12L is the first ROM target, not an image bundled in this milestone.
 
-A real guest-root design requires all of the following:
+## VM engine
 
-1. A VM runtime that can execute an Android guest on an ordinary, non-rooted Android host.
-2. A bootable ARM64 Android guest image (kernel/boot, system, vendor and writable data).
-3. A guest-only Magisk installation patched into that guest's boot/ramdisk and started by the guest init process.
-4. A guest bridge for ADB/shell, file transfer, app installation and Magisk module management. Every command must be routed to the guest, never the host.
+- QEMU ARM64 system emulation is integrated from QubeVM as a pinned Git submodule.
+- The intended stock-device path uses TCG software emulation (no KVM and no host root).
+- User-mode SLIRP networking is used; TAP networking is not enabled.
+- The app opens the QEMU ARM64 machine manager through its own activity.
+- QEMU native libraries are built for Android arm64-v8a during GitHub Actions.
 
-## Why the old Magisk APK build was not enough
+QubeVM upstream: https://github.com/rhn-1k/QubeVM (GPL-3.0). See THIRD_PARTY_NOTICES.md.
 
-The Magisk APK is not a virtual Android system and cannot root itself. Magisk's supported deployment installs into a boot image/ramdisk. The previous `MagiskControl.kt` instead ran `su -c` against the host Android system and accessed host `/data/adb/modules`; that did not meet the product requirement and has been removed on this branch.
+## Current milestone status
 
-## Runtime feasibility findings
+- [x] Add QEMU ARM64 system-emulation source/runtime integration.
+- [x] Keep host-root probing and host Magisk operations out of the app.
+- [ ] Build and boot a compatible Android 12L ARM64 guest image (kernel, boot/initrd, system and vendor).
+- [ ] Verify Android guest boot on a physical non-rooted Android host.
+- [ ] Patch Magisk into the guest boot/ramdisk and verify su inside the guest.
+- [ ] Add a guest-only ADB/shell and Magisk module manager.
 
-- Android Virtualization Framework (AVF) APIs are system APIs and require the restricted `MANAGE_VIRTUAL_MACHINE` permission; ordinary third-party apps cannot simply call them on stock consumer devices.
-- Twoyi is a useful historical Android-container reference, but its own archived project documents host support only through Android 12, an Android 8.1 guest, and a discontinued upstream app. It is not a drop-in Android 10–16 / current HyperOS solution, and its container root must not be mislabeled as a full Magisk boot-image installation.
-- Therefore this branch reports the VM runtime and guest image as missing rather than showing false “rooted” status.
-
-## Current implementation
-
-- Host-root probing and host Magisk module operations have been removed.
-- `GuestRuntimeProbe` inspects only Multi-App's private `files/guest-vm` directory.
-- The UI explicitly distinguishes the host device from the guest Android and does not claim the VM or Magisk is operational.
-
-## Next engineering milestone
-
-Integrate and test a rootless ARM64 guest VM runtime, produce a bootable Android guest image, then patch Magisk into that guest image. Until those artifacts and the guest boot test exist, VM start and Magisk controls must remain unavailable.
-
-## References
-
-- Android Virtualization Framework API: https://android.googlesource.com/platform/packages/modules/Virtualization/+/HEAD/libs/framework-virtualization/README.md
-- Magisk deployment documentation: https://magisk.readthedocs.io/en/latest/developers/deployment.html
-- Twoyi source (archived): https://github.com/twoyi/twoyi
+The presence of QEMU binaries does not mean an Android guest has booted. Guest boot and guest root must be demonstrated separately before those controls are enabled.

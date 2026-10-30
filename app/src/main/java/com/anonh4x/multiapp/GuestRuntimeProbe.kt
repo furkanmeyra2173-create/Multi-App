@@ -1,14 +1,9 @@
 package com.anonh4x.multiapp
 
 import android.content.Context
+import android.os.Build
 import java.io.File
 
-/**
- * Probes only Multi-App's private guest-runtime directory.
- *
- * This class intentionally never runs "su", reads /data/adb, or inspects the
- * physical device's root state. Guest root must be supplied by the guest OS.
- */
 data class GuestRuntimeSnapshot(
     val engineTitle: String,
     val engineDetails: String,
@@ -19,42 +14,17 @@ data class GuestRuntimeSnapshot(
 )
 
 object GuestRuntimeProbe {
-    private const val GUEST_DIR = "guest-vm"
-
     fun inspect(context: Context): GuestRuntimeSnapshot {
-        val root = File(context.filesDir, GUEST_DIR)
-        val engine = File(root, "engine/qemu-system-aarch64")
-        val boot = File(root, "images/boot.img")
-        val system = File(root, "images/system.img")
-        val vendor = File(root, "images/vendor.img")
-        val magiskPayload = File(root, "magisk/magisk.apk")
-
-        val engineReady = engine.isFile && engine.canExecute()
-        val imageReady = boot.isFile && system.isFile && vendor.isFile
-        val magiskReady = magiskPayload.isFile
-
-        val engineText = if (engineReady) "Bulundu" else "Eksik"
-        val guestText = if (imageReady) "Boot / system / vendor imajları bulundu" else "Boot edilebilir konuk imajı yok"
-        val engineTitle = if (engineReady && imageReady) "VM dosyaları bulundu" else "Sanal motor henüz bağlı değil"
-        val engineDetails = if (engineReady && imageReady) {
-            "Dosyalar mevcut. Çalıştırma doğrulaması ayrıca yapılmalıdır."
-        } else {
-            "QEMU Android çalıştırıcısı ve uyumlu, boot edilebilir ARM64 Android konuk imajı henüz pakete eklenmedi."
-        }
-        val magiskTitle = if (magiskReady) "Magisk paketi mevcut" else "Magisk konuk kurulumu bekliyor"
-        val magiskDetails = when {
-            !imageReady -> "Önce sanal Android'in boot etmesi gerekir. Host telefona Magisk kurulmayacak."
-            !magiskReady -> "Konuk sistem hazır olduktan sonra Magisk, yalnızca konuk sistemin boot/ramdisk imajına kurulmalıdır."
-            else -> "Magisk APK dosyası mevcut; bu tek başına MagiskSU veya magiskd'nin çalıştığını kanıtlamaz."
-        }
-
+        val lib = File(context.applicationInfo.nativeLibraryDir, "libqemu-system-aarch64.so")
+        val arm64 = Build.SUPPORTED_ABIS.any { it == "arm64-v8a" }
+        val ready = lib.isFile && arm64
         return GuestRuntimeSnapshot(
-            engineTitle = engineTitle,
-            engineDetails = engineDetails,
-            engineStatus = engineText,
-            guestSystemStatus = guestText,
-            magiskTitle = magiskTitle,
-            magiskDetails = magiskDetails
+            engineTitle = if (ready) "QEMU ARM64 motoru pakette" else "QEMU motoru eksik veya uyumsuz",
+            engineDetails = if (ready) "QEMU yerel kütüphanesi bulundu. Rootsuz TCG yazılım emülasyonu kullanılır." else "ARM64 QEMU yerel kütüphanesi bulunamadı. ABI: ${Build.SUPPORTED_ABIS.joinToString()}",
+            engineStatus = if (ready) "Yerel kütüphane bulundu" else "Yerel kütüphane bulunamadı",
+            guestSystemStatus = "Android 12L (API 32) ARM64 imajı henüz eklenmedi",
+            magiskTitle = "Konuk Magisk kurulumu bekliyor",
+            magiskDetails = "Önce Android 12L konuk sistemi açılmalı. Magisk yalnızca konuk boot/ramdisk imajına kurulacak; fiziksel telefona dokunulmayacak."
         )
     }
 }
