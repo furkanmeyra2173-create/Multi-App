@@ -49,7 +49,7 @@ def main() -> None:
     )
     replace_once(
         root, "app/core/build.gradle.kts",
-        'buildConfigField("String", "APP_PACKAGE_NAME", "\"com.topjohnwu.magisk\"")',
+        r'buildConfigField("String", "APP_PACKAGE_NAME", "\"com.topjohnwu.magisk\"")',
         f'buildConfigField("String", "APP_PACKAGE_NAME", "\"{NEW_PACKAGE}\"")'
     )
     replace_once(
