@@ -1,4 +1,4 @@
-name: Build Multi-App APK
+name: Build Multi-App with Magisk Engine
 
 on:
   push:
@@ -8,30 +8,77 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: multi-app-magisk-build
+  cancel-in-progress: true
+
 jobs:
   build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    name: Build pinned Magisk engine and manager
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: magisk-src
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+    steps:
+      - name: Checkout Multi-App
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Checkout official Magisk v31.1 source
+        uses: actions/checkout@v6
+        with:
+          repository: topjohnwu/Magisk
+          ref: 0972f67d97f9b6302b67c5171283330c74114b4a
+          path: magisk-src
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Verify and brand the official source
+        run: python3 tools/prepare_magisk.py magisk-src
+        working-directory: .
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "25"
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
-          gradle-version: "8.11.1"
+          python-version: "3.x"
 
-      - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
+      - name: Prepare the official Magisk NDK and Rust toolchain
+        run: python3 build.py -v ndk
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - name: Configure Multi-App version and Android ABIs
+        run: |
+          cat > config.prop <<'EOF'
+          version=31.1-Multi-App
+          outdir=out
+          abiList=armeabi-v7a,arm64-v8a,x86,x86_64
+          EOF
+          cat config.prop
+
+      - name: Build Magisk native engine and integrated manager APK
+        run: ./build.py -vr all
+
+      - name: Verify APK and calculate checksum
+        run: |
+          test -s out/app-release.apk
+          sha256sum out/app-release.apk | tee out/SHA256SUMS.txt
+          ls -lh out/app-release.apk
+
+      - name: Upload Multi-App APK
+        uses: actions/upload-artifact@v7
         with:
-          name: Multi-App-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: Multi-App-Magisk-v31.1
+          path: |
+            magisk-src/out/app-release.apk
+            magisk-src/out/SHA256SUMS.txt
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
