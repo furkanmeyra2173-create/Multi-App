@@ -1,84 +1,60 @@
-name: Build Multi-App with Magisk Engine
+name: Build Multi-App Android APK
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "virtual-android-engine-foundation" ]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: multi-app-magisk-build
+  group: multi-app-android-build
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build pinned Magisk engine and manager
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    defaults:
-      run:
-        working-directory: magisk-src
-
+    timeout-minutes: 30
     steps:
       - name: Checkout Multi-App
         uses: actions/checkout@v6
         with:
           persist-credentials: false
 
-      - name: Checkout official Magisk v31.1 source
-        uses: actions/checkout@v6
-        with:
-          repository: topjohnwu/Magisk
-          ref: 0972f67d97f9b6302b67c5171283330c74114b4a
-          path: magisk-src
-          submodules: recursive
-          persist-credentials: false
-
-      - name: Verify and brand the official source
-        run: python3 tools/prepare_magisk.py magisk-src
-        working-directory: .
-
-      - name: Set up JDK 25
+      - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "25"
+          java-version: "17"
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.x"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Prepare the official Magisk NDK and Rust toolchain
-        run: python3 build.py -v ndk
-
-      - name: Configure Multi-App version and Android ABIs
+      - name: Install Android SDK packages
         run: |
-          cat > config.prop <<'EOF'
-          version=31.1-Multi-App
-          outdir=out
-          abiList=armeabi-v7a,arm64-v8a,x86,x86_64
-          EOF
-          cat config.prop
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+          yes | sdkmanager --licenses
 
-      - name: Build Magisk native engine and integrated manager APK
-        run: ./build.py -vr all
-
-      - name: Verify APK and calculate checksum
+      - name: Install Gradle
         run: |
-          test -s out/app-release.apk
-          sha256sum out/app-release.apk | tee out/SHA256SUMS.txt
-          ls -lh out/app-release.apk
+          curl -fsSLo /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+          echo "/tmp/gradle-8.11.1/bin" >> "$GITHUB_PATH"
 
-      - name: Upload Multi-App APK
+      - name: Build release APK
+        run: gradle --no-daemon --stacktrace :app:assembleRelease
+
+      - name: Verify APK
+        run: |
+          test -s app/build/outputs/apk/release/app-release-unsigned.apk
+          ls -lh app/build/outputs/apk/release/app-release-unsigned.apk
+          sha256sum app/build/outputs/apk/release/app-release-unsigned.apk
+
+      - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
-          name: Multi-App-Magisk-v31.1
-          path: |
-            magisk-src/out/app-release.apk
-            magisk-src/out/SHA256SUMS.txt
+          name: Multi-App-foundation
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
-          compression-level: 0
           retention-days: 30
