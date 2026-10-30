@@ -29,14 +29,18 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK and NDK
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platform-tools
-            platforms;android-37
-            build-tools;37.0.0
-            ndk;30.0.16248370
+          packages: platform-tools
+
+      - name: Install Android SDK and NDK packages
+        run: |
+          set -euo pipefail
+          sdkmanager "platforms;android-37"
+          sdkmanager "build-tools;37.0.0"
+          sdkmanager "ndk;30.0.16248370"
+          yes | sdkmanager --licenses
 
       - name: Install QEMU native build dependencies
         run: |
