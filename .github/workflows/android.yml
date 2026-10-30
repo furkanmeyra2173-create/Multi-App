@@ -40,7 +40,7 @@ jobs:
           sdkmanager "platforms;android-37.0"
           sdkmanager "build-tools;37.0.0"
           sdkmanager "ndk;30.0.16248370"
-          yes | sdkmanager --licenses
+          sdkmanager --licenses
 
       - name: Install QEMU native build dependencies
         run: |
