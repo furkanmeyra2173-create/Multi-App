@@ -69,7 +69,6 @@ jobs:
           curl -fsSLo /tmp/pixman.tar.gz https://gitlab.freedesktop.org/pixman/pixman/-/archive/pixman-0.46.4/pixman-pixman-0.46.4.tar.gz
           tar -xzf /tmp/pixman.tar.gz
           mv pixman-pixman-0.46.4 pixman
-          (cd pixman && bash autogen.sh)
 
           curl -fsSLo /tmp/slirp.zip https://gitlab.freedesktop.org/slirp/libslirp/-/archive/v4.9.5/libslirp-v4.9.5.zip
           mkdir -p qemu/subprojects
