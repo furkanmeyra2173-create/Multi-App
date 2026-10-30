@@ -1,84 +1,131 @@
-name: Build Multi-App with Magisk Engine
+name: Build Multi-App Android APK
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "virtual-android-engine-foundation" ]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: multi-app-magisk-build
+  group: multi-app-android-build
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build pinned Magisk engine and manager
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-    defaults:
-      run:
-        working-directory: magisk-src
-
     steps:
-      - name: Checkout Multi-App
+      - name: Checkout Multi-App and QubeVM engine
         uses: actions/checkout@v6
         with:
           persist-credentials: false
-
-      - name: Checkout official Magisk v31.1 source
-        uses: actions/checkout@v6
-        with:
-          repository: topjohnwu/Magisk
-          ref: 0972f67d97f9b6302b67c5171283330c74114b4a
-          path: magisk-src
           submodules: recursive
-          persist-credentials: false
 
-      - name: Verify and brand the official source
-        run: python3 tools/prepare_magisk.py magisk-src
-        working-directory: .
-
-      - name: Set up JDK 25
+      - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "25"
+          java-version: "17"
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
         with:
-          python-version: "3.x"
+          packages: platform-tools
 
-      - name: Prepare the official Magisk NDK and Rust toolchain
-        run: python3 build.py -v ndk
-
-      - name: Configure Multi-App version and Android ABIs
+      - name: Install Android SDK and NDK packages
         run: |
-          cat > config.prop <<'EOF'
-          version=31.1-Multi-App
-          outdir=out
-          abiList=armeabi-v7a,arm64-v8a,x86,x86_64
-          EOF
-          cat config.prop
+          set -euo pipefail
+          sdkmanager "platforms;android-37.0"
+          sdkmanager "build-tools;37.0.0"
+          sdkmanager "ndk;30.0.16248370"
+          sdkmanager --licenses
 
-      - name: Build Magisk native engine and integrated manager APK
-        run: ./build.py -vr all
-
-      - name: Verify APK and calculate checksum
+      - name: Install QEMU native build dependencies
         run: |
-          test -s out/app-release.apk
-          sha256sum out/app-release.apk | tee out/SHA256SUMS.txt
-          ls -lh out/app-release.apk
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake bison flex gettext git libtool-bin make ninja-build patch pkg-config python3-venv rsync texinfo unzip wget zip
+          python3 -m venv /tmp/qemu-tools
+          /tmp/qemu-tools/bin/pip install --upgrade pip meson mako PyYAML
+          echo "/tmp/qemu-tools/bin" >> "$GITHUB_PATH"
 
-      - name: Upload Multi-App APK
+      - name: Fetch and prepare pinned QEMU dependencies
+        working-directory: engine/QubeVM/qube-android-lib/src/main/jni
+        run: |
+          set -euo pipefail
+          curl -fsSLo /tmp/qemu.tar.xz https://download.qemu.org/qemu-11.1.2.tar.xz
+          tar -xJf /tmp/qemu.tar.xz
+          mv qemu-11.1.2 qemu
+
+          curl -fsSLo /tmp/glib.tar.xz https://download.gnome.org/sources/glib/2.90/glib-2.90.1.tar.xz
+          tar -xJf /tmp/glib.tar.xz
+          mv glib-2.90.1 glib
+
+          curl -fsSLo /tmp/libffi.tar.gz https://github.com/libffi/libffi/releases/download/v3.8.0/libffi-3.8.0.tar.gz
+          tar -xzf /tmp/libffi.tar.gz
+          mv libffi-3.8.0 libffi
+
+          curl -fsSLo /tmp/pixman.tar.gz https://gitlab.freedesktop.org/pixman/pixman/-/archive/pixman-0.46.4/pixman-pixman-0.46.4.tar.gz
+          tar -xzf /tmp/pixman.tar.gz
+          mv pixman-pixman-0.46.4 pixman
+
+          curl -fsSLo /tmp/slirp.zip https://gitlab.freedesktop.org/slirp/libslirp/-/archive/v4.9.5/libslirp-v4.9.5.zip
+          mkdir -p qemu/subprojects
+          unzip -q /tmp/slirp.zip -d /tmp/slirp
+          mv /tmp/slirp/libslirp-v4.9.5 qemu/subprojects/libslirp
+
+          curl -fsSLo /tmp/epoxy.zip https://github.com/anholt/libepoxy/archive/refs/tags/1.5.10.zip
+          unzip -q /tmp/epoxy.zip -d /tmp/epoxy
+          mv /tmp/epoxy/libepoxy-1.5.10 libepoxy
+
+          git clone --depth 1 https://gitlab.freedesktop.org/virgl/virglrenderer.git virglrenderer
+
+          patch -p1 -d qemu < patches/qemu-11.1.2.patch
+          patch -p1 -d glib < patches/glib-2.90.1.patch
+          patch -p1 -d qemu/subprojects/libslirp < patches/libslirp-4.9.5.patch
+          patch -p1 -d virglrenderer < patches/virglrenderer-1.3.0-android-egl.patch
+
+      - name: Build QEMU ARM64 for Android (TCG, no host root)
+        working-directory: engine/QubeVM/qube-android-lib/src/main/jni
+        env:
+          BUILD_HOST: arm64-v8a
+          BUILD_GUEST: aarch64-softmmu
+          USE_QEMU_VERSION: 11.1.2
+          BUILD_THREADS: 2
+          USE_KVM: false
+        run: |
+          set -euo pipefail
+          export NDK_ROOT="$ANDROID_SDK_ROOT/ndk/30.0.16248370"
+          make qube
+
+      - name: Stage QEMU ARM64 native library
+        run: |
+          set -euo pipefail
+          mkdir -p engine/QubeVM/qube-android-lib/src/main/jniLibs/arm64-v8a
+          cp engine/QubeVM/qube-android-arm/src/main/jniLibs/arm64-v8a/libqemu-system-aarch64.so engine/QubeVM/qube-android-lib/src/main/jniLibs/arm64-v8a/
+          test -s engine/QubeVM/qube-android-lib/src/main/jniLibs/arm64-v8a/libqemu-system-aarch64.so
+          find engine/QubeVM/qube-android-lib/src/main/jniLibs/arm64-v8a -maxdepth 1 -type f -printf '%f %s bytes\n'
+
+      - name: Install Gradle
+        run: |
+          curl -fsSLo /tmp/gradle.zip https://services.gradle.org/distributions/gradle-9.8.2-bin.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+          echo "/tmp/gradle-9.8.2/bin" >> "$GITHUB_PATH"
+
+      - name: Build Multi-App release APK
+        run: gradle --no-daemon --stacktrace :app:assembleRelease
+
+      - name: Verify APK
+        run: |
+          test -s app/build/outputs/apk/release/app-release-unsigned.apk
+          ls -lh app/build/outputs/apk/release/app-release-unsigned.apk
+          sha256sum app/build/outputs/apk/release/app-release-unsigned.apk
+
+      - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
-          name: Multi-App-Magisk-v31.1
-          path: |
-            magisk-src/out/app-release.apk
-            magisk-src/out/SHA256SUMS.txt
+          name: Multi-App-QEMU-ARM64
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
-          compression-level: 0
           retention-days: 30
