@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply a minimal, fail-closed Multi-App brand/package patch to pinned Magisk v31.1."""
+"""Apply a minimal, fail-closed identity patch to the pinned Magisk v31.1 source."""
 from pathlib import Path
 import subprocess
 import sys
@@ -16,7 +16,7 @@ def replace_once(root: Path, relative: str, old: str, new: str) -> None:
     old_count = data.count(old)
     new_count = data.count(new)
     if old_count == 0 and new_count == 1:
-        return  # idempotent
+        return
     if old_count != 1 or new_count != 0:
         raise SystemExit(
             f"Refusing to patch {relative}: expected exactly one old marker, "
@@ -39,27 +39,32 @@ def main() -> None:
             f"Unexpected Magisk source revision: {commit}; expected {EXPECTED_COMMIT}"
         )
 
-    # The Android namespace stays upstream so the original Magisk source imports
-    # and generated resource references remain intact. Only the installed package
-    # identity and the native manager/provider identity are changed.
+    # Keep upstream Kotlin namespaces unchanged. Change only the installed app
+    # identity and the native manager/provider identity used by Magisk's daemon.
+    escaped_quote = chr(92) + '"'
+    core_package_line = (
+        'buildConfigField("String", "APP_PACKAGE_NAME", "'
+        + escaped_quote + OLD_PACKAGE + escaped_quote + '")'
+    )
+    new_core_package_line = (
+        'buildConfigField("String", "APP_PACKAGE_NAME", "'
+        + escaped_quote + NEW_PACKAGE + escaped_quote + '")'
+    )
+
     replace_once(
         root, "app/build-logic/src/main/java/Setup.kt",
-        'applicationId = "com.topjohnwu.magisk"',
+        f'applicationId = "{OLD_PACKAGE}"',
         f'applicationId = "{NEW_PACKAGE}"'
     )
-    replace_once(
-        root, "app/core/build.gradle.kts",
-        r'buildConfigField("String", "APP_PACKAGE_NAME", "\"com.topjohnwu.magisk\"")',
-        f'buildConfigField("String", "APP_PACKAGE_NAME", "\"{NEW_PACKAGE}\"")'
-    )
+    replace_once(root, "app/core/build.gradle.kts", core_package_line, new_core_package_line)
     replace_once(
         root, "native/src/include/consts.rs",
-        'pub const APP_PACKAGE_NAME: &str = "com.topjohnwu.magisk";',
+        f'pub const APP_PACKAGE_NAME: &str = "{OLD_PACKAGE}";',
         f'pub const APP_PACKAGE_NAME: &str = "{NEW_PACKAGE}";'
     )
     replace_once(
         root, "native/src/include/consts.hpp",
-        '#define JAVA_PACKAGE_NAME "com.topjohnwu.magisk"',
+        f'#define JAVA_PACKAGE_NAME "{OLD_PACKAGE}"',
         f'#define JAVA_PACKAGE_NAME "{NEW_PACKAGE}"'
     )
     replace_once(
@@ -68,16 +73,16 @@ def main() -> None:
         'android:label="Multi-App"'
     )
 
-    # Verify the four package identities agree before any native binary is built.
     checks = [
-        (root / "app/build-logic/src/main/java/Setup.kt", f'applicationId = "{NEW_PACKAGE}"'),
-        (root / "app/core/build.gradle.kts", f'APP_PACKAGE_NAME", "\"{NEW_PACKAGE}\""'),
-        (root / "native/src/include/consts.rs", f'APP_PACKAGE_NAME: &str = "{NEW_PACKAGE}"'),
-        (root / "native/src/include/consts.hpp", f'JAVA_PACKAGE_NAME "{NEW_PACKAGE}"'),
-        (root / "app/core/src/main/AndroidManifest.xml", 'android:label="Multi-App"'),
+        (root / "app/build-logic/src/main/java/Setup.kt", "applicationId", NEW_PACKAGE),
+        (root / "app/core/build.gradle.kts", "APP_PACKAGE_NAME", NEW_PACKAGE),
+        (root / "native/src/include/consts.rs", "APP_PACKAGE_NAME", NEW_PACKAGE),
+        (root / "native/src/include/consts.hpp", "JAVA_PACKAGE_NAME", NEW_PACKAGE),
+        (root / "app/core/src/main/AndroidManifest.xml", "android:label", "Multi-App"),
     ]
-    for path, marker in checks:
-        if marker not in path.read_text(encoding="utf-8"):
+    for path, marker, expected in checks:
+        data = path.read_text(encoding="utf-8")
+        if marker not in data or expected not in data:
             raise SystemExit(f"Post-patch verification failed: {path.relative_to(root)}")
 
     print(f"Prepared official Magisk v31.1 ({commit}) as {NEW_PACKAGE} / Multi-App")
